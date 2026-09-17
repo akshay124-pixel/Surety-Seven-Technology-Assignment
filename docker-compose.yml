@@ -55,7 +55,7 @@ services:
       RATE_LIMIT_WINDOW_MS: 60000
       RATE_LIMIT_MAX_REQUESTS: 100
     ports:
-      - "3000:3000"
+      - "3002:3000"  # Changed to 3002 to avoid conflict with DMS
     depends_on:
       postgres:
         condition: service_healthy
