@@ -1,0 +1,9 @@
+{
+  "applicantId": "COMP-123",
+  "bondType": "CONTRACT",
+  "bondAmount": 500000,
+  "effectiveDate": "2026-10-01",
+  "obligee": {
+    "name": "ABC Construction LLC"
+  }
+}

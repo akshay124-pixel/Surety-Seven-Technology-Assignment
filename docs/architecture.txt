@@ -1,0 +1,240 @@
+# System Architecture Diagram
+
+## Component View
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                             CLIENT LAYER                                   │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  HTTP Clients (Web, Mobile, API Consumers)                           │  │
+│  │  • POST /applications (with optional Idempotency-Key header)         │  │
+│  │  • GET /applications/:id                                             │  │
+│  └──────────────────────┬───────────────────────────────────────────────┘  │
+└─────────────────────────┼──────────────────────────────────────────────────┘
+                          │
+                          │ HTTPS
+                          ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                          API LAYER (Express)                               │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Middleware Stack                                                    │  │
+│  │  ├─ Request ID (correlation tracking)                               │  │
+│  │  ├─ Rate Limiter (100 req/min per IP)                               │  │
+│  │  ├─ Body Parser (JSON, 1MB limit)                                   │  │
+│  │  ├─ Helmet (security headers)                                        │  │
+│  │  └─ Error Handler (structured errors)                               │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Route Handlers                                                      │  │
+│  │  ├─ POST /applications → ApplicationController.createApplication    │  │
+│  │  ├─ GET /applications/:id → ApplicationController.getApplication    │  │
+│  │  ├─ GET /health → health check                                      │  │
+│  │  └─ GET /ready → readiness check (DB + Redis)                       │  │
+│  └──────────────────────┬───────────────────────────────────────────────┘  │
+└─────────────────────────┼──────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                        APPLICATION SERVICE LAYER                           │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  ApplicationService                                                  │  │
+│  │  ├─ Validate request (Zod schema)                                   │  │
+│  │  ├─ Check idempotency (IdempotencyService)                          │  │
+│  │  ├─ Generate application ID                                         │  │
+│  │  ├─ Persist application (ApplicationRepository)                     │  │
+│  │  ├─ Enqueue evaluation job (QueueService)                           │  │
+│  │  └─ Save idempotency record                                         │  │
+│  └──────────────┬──────────────────────┬────────────────────────────────┘  │
+│                 │                      │                                   │
+│  ┌──────────────▼───────────┐  ┌──────▼──────────────┐                   │
+│  │  IdempotencyService      │  │  UnderwritingEngine │                   │
+│  │  • Check cache           │  │  • Credit score rule│                   │
+│  │  • Verify hash           │  │  • Years in biz rule│                   │
+│  │  • Return 409 on conflict│  │  • Bond/revenue rule│                   │
+│  └──────────────────────────┘  │  • Exposure rule    │                   │
+│                                 │  • Decision logic   │                   │
+│                                 └─────────────────────┘                   │
+└───────────────────┬──────────────────────┬─────────────────────────────────┘
+                    │                      │
+                    ▼                      ▼
+┌──────────────────────────────┐  ┌──────────────────────────────┐
+│     DATA LAYER               │  │     QUEUE LAYER              │
+│  ┌───────────────────────┐   │  │  ┌───────────────────────┐   │
+│  │   PostgreSQL          │   │  │  │   Redis + BullMQ      │   │
+│  │                       │   │  │  │                       │   │
+│  │ • applications        │   │  │  │ • evaluation-queue    │   │
+│  │ • applicant_snapshots │   │  │  │ • notification-queue  │   │
+│  │ • decision_factors    │   │  │  │                       │   │
+│  │ • outbox_events       │   │  │  │ Job Features:         │   │
+│  │ • idempotency_records │   │  │  │ • Retry with backoff  │   │
+│  │                       │   │  │  │ • Attempt tracking    │   │
+│  │ Constraints:          │   │  │  │ • Failed job storage  │   │
+│  │ • Unique app IDs      │   │  │  └───────────────────────┘   │
+│  │ • Unique idem keys    │   │  └──────────────┬───────────────┘
+│  │ • FK relationships    │   │                 │
+│  └───────────────────────┘   │                 │
+└──────────────────────────────┘                 │
+                                                  │
+                    ┌─────────────────────────────┘
+                    │
+                    ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                         WORKER LAYER (Background)                          │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  EvaluationWorker (BullMQ Consumer)                                  │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  1. Receive job from evaluation-queue                          │  │  │
+│  │  │  2. Update status → EVALUATING                                 │  │  │
+│  │  │  3. Fetch applicant info (ApplicantClient with retry)          │  │  │
+│  │  │  4. Save applicant snapshot                                    │  │  │
+│  │  │  5. Calculate score (UnderwritingEngine)                       │  │  │
+│  │  │  6. BEGIN TRANSACTION:                                         │  │  │
+│  │  │     ├─ Update application (APPROVED/REFERRED/DECLINED)         │  │  │
+│  │  │     ├─ Insert decision factors                                 │  │  │
+│  │  │     └─ Insert outbox event                                     │  │  │
+│  │  │  7. COMMIT TRANSACTION                                         │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  NotificationWorker (BullMQ Consumer + Outbox Poller)                │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  1. Poll outbox table for PENDING events (every 5s)            │  │  │
+│  │  │  2. Enqueue found events to notification-queue                 │  │  │
+│  │  │  3. Consume job from notification-queue                        │  │  │
+│  │  │  4. Mark event → PROCESSING                                    │  │  │
+│  │  │  5. Send to downstream API (NotificationClient with retry)     │  │  │
+│  │  │  6. On success: Mark event → DELIVERED                         │  │  │
+│  │  │  7. On failure: Increment attempts, schedule retry             │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+└────────────────┬───────────────────────────┬───────────────────────────────┘
+                 │                           │
+                 │                           │
+                 ▼                           ▼
+┌──────────────────────────────────┐  ┌──────────────────────────────────┐
+│   EXTERNAL: Applicant API        │  │   EXTERNAL: Downstream System    │
+│  ┌────────────────────────────┐  │  │  ┌────────────────────────────┐  │
+│  │ GET /applicants/:id        │  │  │  │ POST /events               │  │
+│  │                            │  │  │  │                            │  │
+│  │ Returns:                   │  │  │  │ Accepts:                   │  │
+│  │ • annualRevenue            │  │  │  │ • eventId (idempotent)     │  │
+│  │ • yearsInBusiness          │  │  │  │ • eventType                │  │
+│  │ • creditScore              │  │  │  │ • applicationId            │  │
+│  │ • existingExposure         │  │  │  │ • decision                 │  │
+│  │                            │  │  │  │ • score                    │  │
+│  │ Can simulate:              │  │  │  │                            │  │
+│  │ • Success                  │  │  │  │ Can simulate:              │  │
+│  │ • Timeout                  │  │  │  │ • Success                  │  │
+│  │ • 500 error                │  │  │  │ • Timeout                  │  │
+│  │ • Malformed response       │  │  │  │ • 500 error                │  │
+│  │ • Slow response            │  │  │  │ • Slow response            │  │
+│  └────────────────────────────┘  │  │  └────────────────────────────┘  │
+└──────────────────────────────────┘  └──────────────────────────────────┘
+
+
+## Data Flow: Happy Path
+
+1. Client → POST /applications → API
+2. API → Check idempotency → PostgreSQL
+3. API → Create application (PENDING) → PostgreSQL
+4. API → Enqueue job → Redis/BullMQ
+5. API → 201 Created → Client
+
+   [Client can now GET status while processing continues]
+
+6. Worker → Dequeue job → Redis/BullMQ
+7. Worker → Update (EVALUATING) → PostgreSQL
+8. Worker → GET applicant → External Applicant API
+9. Worker → Calculate score → UnderwritingEngine
+10. Worker → BEGIN TX → PostgreSQL
+11. Worker → Update (APPROVED) → PostgreSQL
+12. Worker → Insert factors → PostgreSQL
+13. Worker → Insert outbox event → PostgreSQL
+14. Worker → COMMIT TX → PostgreSQL
+15. NotificationWorker → Poll outbox → PostgreSQL
+16. NotificationWorker → POST event → External Downstream API
+17. NotificationWorker → Mark DELIVERED → PostgreSQL
+
+
+## Reliability Patterns
+
+┌─────────────────────────────────────────────────────────────┐
+│ Pattern: Idempotency                                        │
+├─────────────────────────────────────────────────────────────┤
+│  Request 1 (key=X, hash=H1)                                 │
+│    → Check DB → Not found → Process → Store (X, H1, app1)  │
+│                                                             │
+│  Request 2 (key=X, hash=H1)                                 │
+│    → Check DB → Found (X, H1, app1) → Return cached app1   │
+│                                                             │
+│  Request 3 (key=X, hash=H2)                                 │
+│    → Check DB → Found but hash differs → 409 Conflict      │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ Pattern: Outbox                                             │
+├─────────────────────────────────────────────────────────────┤
+│  BEGIN TRANSACTION                                          │
+│    ├─ UPDATE applications SET status='APPROVED'             │
+│    ├─ INSERT decision_factors (...)                         │
+│    └─ INSERT outbox_events (eventId, payload, status)      │
+│  COMMIT                                                     │
+│                                                             │
+│  [Decision and outbox event are atomic]                     │
+│                                                             │
+│  Later: Worker polls outbox, sends event, marks DELIVERED   │
+│                                                             │
+│  [If worker crashes, event remains for retry]               │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ Pattern: Retry with Exponential Backoff                     │
+├─────────────────────────────────────────────────────────────┤
+│  Attempt 1: immediate     → Timeout                         │
+│  Attempt 2: wait ~2s      → 500 Error                       │
+│  Attempt 3: wait ~4s      → Success                         │
+│                                                             │
+│  Non-retryable errors (malformed response, 404):            │
+│    → Mark FAILED immediately, don't retry                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## State Machine
+
+```
+Application Lifecycle States:
+
+    [Client submits]
+           │
+           ▼
+      ┌─────────┐
+      │ PENDING │ ◄─── Initial state after POST
+      └────┬────┘
+           │
+           │ [Worker picks up job]
+           │
+           ▼
+    ┌────────────┐
+    │ EVALUATING │ ◄─── Fetching applicant data, scoring
+    └─────┬──────┘
+          │
+          │ [Based on score]
+          │
+    ┌─────┼─────┬─────────┐
+    │     │     │         │
+    ▼     ▼     ▼         ▼
+┌────┐ ┌────┐ ┌────┐ ┌──────┐
+│APP-│ │REF-│ │DEC-│ │FAILED│ ◄─── All terminal states
+│ROVE│ │ERRE│ │LINE│ │      │      (no transitions out)
+│D   │ │D   │ │D   │ │      │
+└────┘ └────┘ └────┘ └──────┘
+
+Score >= 80 → APPROVED
+Score 50-79 → REFERRED
+Score < 50  → DECLINED
+Error       → FAILED
+```
