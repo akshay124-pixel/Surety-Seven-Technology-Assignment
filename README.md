@@ -2,8 +2,52 @@
 
 A production-ready surety bond application processing system with automated underwriting, reliable event handling, and comprehensive failure recovery.
 
+## 🌐 Live Demo
+
+**API Base URL**: https://srv988392.hstgr.cloud/surety
+
+### Quick Test (Open in Browser):
+- **Health Check**: https://srv988392.hstgr.cloud/surety/health
+- **Readiness Check**: https://srv988392.hstgr.cloud/surety/ready
+
+### Test with cURL:
+
+**Create Application:**
+```bash
+curl -X POST https://srv988392.hstgr.cloud/surety/applications \
+  -H "Content-Type: application/json" \
+  -d '{
+    "applicantId": "COMP-123",
+    "bondType": "CONTRACT",
+    "bondAmount": 500000,
+    "effectiveDate": "2026-10-01",
+    "obligee": {"name": "Test Company"}
+  }'
+```
+
+**Get Application Status:**
+```bash
+# Replace {applicationId} with the ID returned from create endpoint
+curl https://srv988392.hstgr.cloud/surety/applications/{applicationId}
+```
+
+**Example Response:**
+```json
+{
+  "applicationId": "APP-MU5HM4N0FIX4OVA",
+  "status": "APPROVED",
+  "score": 100,
+  "decision": "APPROVE",
+  "applicantId": "COMP-123",
+  "bondAmount": 500000
+}
+```
+
+---
+
 ## Table of Contents
 
+- [Live Demo](#-live-demo)
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Technology Stack](#technology-stack)
