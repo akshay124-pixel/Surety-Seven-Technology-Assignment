@@ -34,8 +34,13 @@ export function createApp(): Application {
     next();
   });
 
-  app.use('/applications', applicationRoutes);
+  // Health and root routes (must come before other routes)
   app.use('/', healthRoutes);
+  
+  // Application routes
+  app.use('/applications', applicationRoutes);
+  
+  // External mock routes
   app.use('/external/applicants', mockApplicantRoutes);
   app.use('/external/downstream/events', mockDownstreamRoutes);
 
