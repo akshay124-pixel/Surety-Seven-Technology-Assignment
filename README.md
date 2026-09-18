@@ -7,6 +7,7 @@ A production-ready surety bond application processing system with automated unde
 **API Base URL**: https://srv988392.hstgr.cloud/surety
 
 ### Quick Test (Open in Browser):
+- **API Landing Page**: https://srv988392.hstgr.cloud/surety
 - **Health Check**: https://srv988392.hstgr.cloud/surety/health
 - **Readiness Check**: https://srv988392.hstgr.cloud/surety/ready
 
@@ -312,6 +313,35 @@ DOWNSTREAM_API_URL=http://localhost:3000/external/downstream/events
 ```
 
 ## API Documentation
+
+### GET / (API Root)
+
+API landing page that provides service information and available endpoints.
+
+**Request**:
+```
+GET /
+```
+
+**Response** (200 OK):
+```json
+{
+  "service": "SuretySeven Surety Bond Application System",
+  "status": "operational",
+  "message": "API is running successfully",
+  "version": "1.0.0",
+  "endpoints": {
+    "health": "/health",
+    "readiness": "/ready",
+    "applications": {
+      "create": "POST /applications",
+      "retrieve": "GET /applications/:applicationId"
+    }
+  },
+  "documentation": "https://github.com/[repository]/README.md",
+  "timestamp": "2026-09-18T06:30:00.000Z"
+}
+```
 
 ### POST /applications
 

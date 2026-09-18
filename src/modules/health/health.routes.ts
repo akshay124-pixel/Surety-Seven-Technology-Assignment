@@ -5,6 +5,26 @@ import { logger } from '../../common/logging/logger';
 
 const router = Router();
 
+// API root endpoint - serves as landing page for live demo
+router.get('/', (_req: Request, res: Response) => {
+  res.status(200).json({
+    service: 'SuretySeven Surety Bond Application System',
+    status: 'operational',
+    message: 'API is running successfully',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      readiness: '/ready',
+      applications: {
+        create: 'POST /applications',
+        retrieve: 'GET /applications/:applicationId',
+      },
+    },
+    documentation: 'https://github.com/[repository]/README.md',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 router.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({
     status: 'healthy',
